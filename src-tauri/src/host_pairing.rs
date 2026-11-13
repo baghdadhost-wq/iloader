@@ -117,7 +117,22 @@ pub fn cancel_host_pairing() {
     }
 }
 
+/// LiveContainer sets this for the apps it runs.
+fn in_livecontainer() -> bool {
+    std::env::var_os("LC_HOME_PATH").is_some()
+}
+
 async fn run(app: &AppHandle) -> Result<DeviceInfo, AppError> {
+    // Inside LiveContainer, iOS checks Local Network services and notifications
+    // against LiveContainer's own Info.plist: the pairable-host service isn't listed
+    // there, and touching notifications crashes unless LiveContainer's "Fix Local
+    // Notification" is on. Stop with an explanation instead.
+    if in_livecontainer() {
+        return Err(AppError::RemotePairing(
+            "Pairing without a computer doesn't work while iloader runs inside LiveContainer, because LiveContainer isn't allowed to advertise the pairing service. Install iloader as a regular app (SideStore, iloader on a computer...) to use it. Importing a pairing file still works here.".into(),
+        ));
+    }
+
     notifications::request_permission(app);
 
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
