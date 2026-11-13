@@ -111,7 +111,18 @@
     "wifi_failed_add": "فشلت إضافة الجهاز",
     "wifi_remove": "إزالة الجهاز",
     "wifi_removed": "تمت إزالة {{device}}",
-    "wifi_failed_remove": "فشلت إزالة الجهاز"
+    "wifi_failed_remove": "فشلت إزالة الجهاز",
+    "pair_title": "اقتران دون كمبيوتر (iOS 27 وأحدث)",
+    "pair_hint": "يعمل لهذا الجهاز وللأجهزة الأخرى على نفس شبكة Wi-Fi. يجب تفعيل وضع المطوّر على الجهاز الذي تقرنه.",
+    "pair_start": "بدء الاقتران",
+    "pair_waiting": "الآن على الجهاز الذي تريد إضافته: افتح الإعدادات ← الخصوصية والأمان ← وضع المطوّر، واضغط \"Pair with iloader\".",
+    "pair_waiting_self": "تقرن هذا الجهاز؟ شغّل LocalDevVPN (أو StosVPN) أولاً، ثم انتقل إلى الإعدادات. سيصلك الرمز كإشعار، ولديك حوالي 30 ثانية.",
+    "pair_pin": "أدخل هذا الرمز على الجهاز:",
+    "pair_finishing": "تم الاقتران مع {{device}}. جارٍ إنشاء ملف الاقتران...",
+    "pair_finishing_self": "أبقِ LocalDevVPN متصلاً وارجع إلى iloader.",
+    "pair_done": "تم اقتران {{device}}",
+    "pair_failed": "فشل الاقتران",
+    "wifi_manual_title": "أو استورد ملف اقتران"
   },
   "operation": {
     "failed": "فشلت المهمة",

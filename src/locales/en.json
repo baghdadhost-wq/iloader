@@ -112,7 +112,18 @@
     "wifi_failed_add": "Failed to add device",
     "wifi_remove": "Remove device",
     "wifi_removed": "Removed {{device}}",
-    "wifi_failed_remove": "Failed to remove device"
+    "wifi_failed_remove": "Failed to remove device",
+    "pair_title": "Pair without a computer (iOS 27+)",
+    "pair_hint": "Works for this device and for other devices on the same Wi-Fi. Developer Mode must be turned on on the device you're pairing.",
+    "pair_start": "Start pairing",
+    "pair_waiting": "Now, on the device you want to add: open Settings → Privacy & Security → Developer Mode and tap “Pair with iloader”.",
+    "pair_waiting_self": "Pairing this device? Connect LocalDevVPN (or StosVPN) first, then switch to Settings. The code will arrive as a notification; you have about 30 seconds.",
+    "pair_pin": "Enter this code on the device:",
+    "pair_finishing": "Paired with {{device}}. Creating the pairing file...",
+    "pair_finishing_self": "Keep LocalDevVPN connected and come back to iloader.",
+    "pair_done": "Paired {{device}}",
+    "pair_failed": "Pairing failed",
+    "wifi_manual_title": "Or import a pairing file"
   },
   "operation": {
     "failed": "Operation failed.",

@@ -92,3 +92,38 @@
   flex-direction: column;
   gap: 0.35rem;
 }
+
+.wifi-modal-content h3 {
+  margin: 0.25rem 0 0;
+  font-size: 1.05rem;
+}
+
+.wifi-divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  margin: 0.5rem 0;
+}
+
+.host-pairing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: center;
+}
+
+.host-pairing p {
+  margin: 0;
+}
+
+.pairing-pin {
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: 0.4em;
+  font-variant-numeric: tabular-nums;
+  padding: 0.5rem 1rem;
+  border-radius: 14px;
+  background: rgba(10, 132, 255, 0.15);
+  border: 1px solid var(--accent-primary);
+}

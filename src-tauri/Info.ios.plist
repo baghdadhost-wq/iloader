@@ -9,6 +9,8 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_apple-mobdev2._tcp</string>
+		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
 	</array>
 	<!-- Lets users open iloader's folder (logs, downloads) in the Files app. -->
 	<key>UIFileSharingEnabled</key>

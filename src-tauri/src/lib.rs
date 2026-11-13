@@ -9,6 +9,7 @@ mod pairing;
 #[macro_use]
 mod secure_storage;
 mod error;
+mod host_pairing;
 mod logging;
 mod operation;
 
@@ -25,6 +26,7 @@ use crate::{
         delete_stored_rppairing, export_pairing_cmd, has_stored_rppairing, installed_pairing_apps,
         place_pairing_cmd,
     },
+    host_pairing::{cancel_host_pairing, start_host_pairing},
     secure_storage::{force_disable_keyring, keyring_available},
     sideload::{SideloaderMutex, install_sidestore_operation, sideload_operation, upload_file},
 };
@@ -38,6 +40,10 @@ pub fn run() {
     // The updater is desktop-only (see the target-specific dependency in Cargo.toml).
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    // Posts the pairing code while the user is in Settings (host_pairing.rs).
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.plugin(tauri_plugin_notification::init());
 
     builder
         .plugin(tauri_plugin_process::init())
@@ -136,6 +142,8 @@ pub fn run() {
             remove_network_device,
             is_mobile,
             upload_file,
+            start_host_pairing,
+            cancel_host_pairing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

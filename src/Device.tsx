@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./Device.css";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Modal } from "./components/Modal";
@@ -10,6 +11,13 @@ import { isMobile, pickFile, readFileBytes } from "./mobile";
 
 // Address LocalDevVPN / StosVPN route back to the device itself.
 const SELF_DEVICE_ADDRESS = "10.7.0.1";
+
+/** Progress of device-initiated pairing (src-tauri/src/host_pairing.rs). */
+type HostPairingState =
+  | { stage: "starting" }
+  | { stage: "waiting" }
+  | { stage: "pin"; pin: string }
+  | { stage: "finishing"; device: string; this_device: boolean };
 
 export type DeviceInfo = {
   name: string;
@@ -38,6 +46,9 @@ export const Device = ({
   const [wifiAddress, setWifiAddress] = useState("");
   const [wifiPairing, setWifiPairing] = useState<File | null>(null);
   const [addingWifi, setAddingWifi] = useState(false);
+  const [hostPairing, setHostPairing] = useState<HostPairingState | null>(
+    null,
+  );
 
   const listingDevices = useRef<boolean>(false);
   const pairingRequestId = useRef<number>(0);
@@ -199,17 +210,49 @@ export const Device = ({
       const device = await promise;
       setShowAddWifi(false);
       // Update the list in place: a full reload would auto-select the first device.
-      setDevices((prev) => [
-        ...prev.filter((d) => d.udid !== device.udid),
-        device,
-      ]);
-      selectDevice(device);
+      addPairedDevice(device);
     } catch {
       // error shown by the toast
     } finally {
       setAddingWifi(false);
     }
-  }, [wifiAddress, wifiPairing, t, err, selectDevice]);
+  }, [wifiAddress, wifiPairing, t, err, addPairedDevice]);
+
+  const addPairedDevice = useCallback(
+    (device: DeviceInfo) => {
+      setDevices((prev) => [
+        ...prev.filter((d) => d.udid !== device.udid),
+        device,
+      ]);
+      selectDevice(device);
+    },
+    [selectDevice],
+  );
+
+  const startHostPairing = useCallback(async () => {
+    setHostPairing({ stage: "starting" });
+    const unlisten = await listen<HostPairingState>("host-pairing", (e) =>
+      setHostPairing(e.payload),
+    );
+    try {
+      const device = await invoke<DeviceInfo>("start_host_pairing");
+      toast.success(t("device.pair_done", { device: device.name }));
+      setShowAddWifi(false);
+      addPairedDevice(device);
+    } catch (e) {
+      const message = String((e as any)?.message ?? e ?? "");
+      if (!message.toLowerCase().includes("canceled")) {
+        toast.error(err(t("device.pair_failed"), e as AppError));
+      }
+    } finally {
+      unlisten();
+      setHostPairing(null);
+    }
+  }, [t, err, addPairedDevice]);
+
+  const cancelHostPairing = useCallback(() => {
+    invoke("cancel_host_pairing").catch(() => {});
+  }, []);
 
   const removeWifiDevice = useCallback(
     async (device: DeviceInfo) => {
@@ -263,11 +306,56 @@ export const Device = ({
       <Modal
         isOpen={showAddWifi}
         close={() => {
+          if (hostPairing) cancelHostPairing();
           if (!addingWifi) setShowAddWifi(false);
         }}
       >
         <div className="wifi-modal-content">
           <h2>{t("device.wifi_add_title")}</h2>
+          <h3>{t("device.pair_title")}</h3>
+          <p className="wifi-hint">{t("device.pair_hint")}</p>
+          {hostPairing === null ? (
+            <button onClick={startHostPairing} disabled={addingWifi}>
+              {t("device.pair_start")}
+            </button>
+          ) : (
+            <div className="host-pairing">
+              {(hostPairing.stage === "starting" ||
+                hostPairing.stage === "waiting") && (
+                <>
+                  <div className="spinner" />
+                  <p>{t("device.pair_waiting")}</p>
+                  <p className="wifi-hint">{t("device.pair_waiting_self")}</p>
+                </>
+              )}
+              {hostPairing.stage === "pin" && (
+                <>
+                  <p>{t("device.pair_pin")}</p>
+                  <div className="pairing-pin">{hostPairing.pin}</div>
+                </>
+              )}
+              {hostPairing.stage === "finishing" && (
+                <>
+                  <div className="spinner" />
+                  <p>
+                    {t("device.pair_finishing", {
+                      device: hostPairing.device,
+                    })}
+                  </p>
+                  {hostPairing.this_device && (
+                    <p className="wifi-hint">
+                      {t("device.pair_finishing_self")}
+                    </p>
+                  )}
+                </>
+              )}
+              <button className="wifi-secondary" onClick={cancelHostPairing}>
+                {t("device.pairing_cancel")}
+              </button>
+            </div>
+          )}
+          <hr className="wifi-divider" />
+          <h3>{t("device.wifi_manual_title")}</h3>
           <p className="wifi-hint">{t("device.wifi_hint")}</p>
           <label className="wifi-field">
             <span>{t("device.wifi_ip_address")}</span>
@@ -279,7 +367,7 @@ export const Device = ({
               placeholder="192.168.1.20"
               value={wifiAddress}
               onChange={(e) => setWifiAddress(e.target.value)}
-              disabled={addingWifi}
+              disabled={addingWifi || hostPairing !== null}
             />
           </label>
           <button

@@ -213,7 +213,7 @@ fn tcp_provider(address: &str, pairing: &[u8]) -> Result<TcpProvider, AppError> 
     })
 }
 
-async fn lockdown_string(lockdown: &mut LockdownClient, key: &str) -> Result<String, AppError> {
+pub(crate) async fn lockdown_string(lockdown: &mut LockdownClient, key: &str) -> Result<String, AppError> {
     let value = lockdown.get_value(Some(key), None).await.map_err(|e| {
         AppError::DeviceComsWithMessage(format!("Failed to fetch {key}"), e.to_string())
     })?;
@@ -259,14 +259,26 @@ pub async fn add_network_device(
     let version = lockdown_string(&mut lockdown, "ProductVersion").await?;
     let udid = lockdown_string(&mut lockdown, "UniqueDeviceID").await?;
 
+    store_network_device(&app, address, pairing, name, udid, version)
+}
+
+/// Saves a Wi-Fi device and its pairing file so it shows up in the device list.
+pub(crate) fn store_network_device(
+    app: &AppHandle,
+    address: String,
+    pairing: Vec<u8>,
+    name: String,
+    udid: String,
+    version: String,
+) -> Result<DeviceInfo, AppError> {
     let key = network_pairing_key(&udid);
-    with_pairing_storage(&app, |storage| {
+    with_pairing_storage(app, |storage| {
         storage.store_data(&key, &pairing).map_err(|e| {
             AppError::Storage("Failed to store Wi-Fi pairing file".into(), e.to_string())
         })
     })?;
 
-    let mut saved = load_saved_network_devices(&app)?;
+    let mut saved = load_saved_network_devices(app)?;
     let entry = SavedNetworkDevice {
         name,
         udid: udid.clone(),
@@ -283,7 +295,7 @@ pub async fn add_network_device(
             saved.len() - 1
         }
     };
-    save_network_devices(&app, &saved)?;
+    save_network_devices(app, &saved)?;
 
     network_pairings()
         .lock()
