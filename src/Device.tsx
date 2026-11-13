@@ -191,6 +191,17 @@ export const Device = ({
     setShowAddWifi(true);
   }, []);
 
+  const addPairedDevice = useCallback(
+    (device: DeviceInfo) => {
+      setDevices((prev) => [
+        ...prev.filter((d) => d.udid !== device.udid),
+        device,
+      ]);
+      selectDevice(device);
+    },
+    [selectDevice],
+  );
+
   const addWifiDevice = useCallback(async () => {
     if (!wifiAddress.trim() || !wifiPairing) return;
     setAddingWifi(true);
@@ -217,17 +228,6 @@ export const Device = ({
       setAddingWifi(false);
     }
   }, [wifiAddress, wifiPairing, t, err, addPairedDevice]);
-
-  const addPairedDevice = useCallback(
-    (device: DeviceInfo) => {
-      setDevices((prev) => [
-        ...prev.filter((d) => d.udid !== device.udid),
-        device,
-      ]);
-      selectDevice(device);
-    },
-    [selectDevice],
-  );
 
   const startHostPairing = useCallback(async () => {
     setHostPairing({ stage: "starting" });
