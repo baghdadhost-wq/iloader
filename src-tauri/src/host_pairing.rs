@@ -88,6 +88,14 @@ fn rp_err(context: &str) -> impl Fn(IdeviceError) -> AppError + '_ {
 /// Resolves with the new Wi-Fi device once pairing completes.
 #[tauri::command]
 pub async fn start_host_pairing(app: AppHandle) -> Result<DeviceInfo, AppError> {
+    // The whole pairing flow (listener, pairing, tunnel, RSD, lockdown) makes a very
+    // large future. Tauri creates a command's future on the main thread before
+    // spawning it, and iOS gives that thread a small stack, so keep the command's
+    // own future tiny and put the real work on the heap.
+    Box::pin(host_pairing(app)).await
+}
+
+async fn host_pairing(app: AppHandle) -> Result<DeviceInfo, AppError> {
     let token = CancellationToken::new();
     if let Some(old) = CANCEL.lock().unwrap().replace(token.clone()) {
         old.cancel();

@@ -231,6 +231,15 @@ pub async fn add_network_device(
     address: String,
     pairing: Vec<u8>,
 ) -> Result<DeviceInfo, AppError> {
+    // Keep the command's future small; see host_pairing.rs.
+    Box::pin(add_network_device_inner(app, address, pairing)).await
+}
+
+async fn add_network_device_inner(
+    app: AppHandle,
+    address: String,
+    pairing: Vec<u8>,
+) -> Result<DeviceInfo, AppError> {
     let address = address.trim().to_string();
     let provider = tcp_provider(&address, &pairing)?;
 
