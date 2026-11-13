@@ -1,11 +1,12 @@
 name: Publish release from finished builds
 
-# Pushing a tag like "ios-v1" publishes the artifacts of already finished
-# workflow runs as a GitHub release. The run IDs live in release-runs.txt.
+# Pushing to the "release" branch publishes the artifacts of already finished
+# workflow runs as a GitHub release. The run IDs and the tag live in
+# release-runs.txt; the release tag is created by this job.
 on:
   push:
-    tags:
-      - "ios-v*"
+    branches:
+      - release
 
 permissions:
   contents: write
@@ -24,7 +25,7 @@ jobs:
           mkdir -p dl out
           while read -r run; do
             [ -z "$run" ] && continue
-            case "$run" in \#*) continue ;; esac
+            case "$run" in \#*|tag:*) continue ;; esac
             gh run download "$run" --repo "$GITHUB_REPOSITORY" --dir "dl/$run"
           done < .github/release-runs.txt
           find dl -type f | sort
@@ -50,9 +51,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" out/* \
+          TAG=$(sed -n 's/^tag: *//p' .github/release-runs.txt)
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" out/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "iloader for iPad (Wi-Fi + pairing without a computer) — $GITHUB_REF_NAME" \
+            --title "iloader for iPad (Wi-Fi + pairing without a computer) — $TAG" \
             --notes-file .github/release-notes.md
