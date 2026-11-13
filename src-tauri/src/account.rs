@@ -198,38 +198,61 @@ async fn login(
         anisette_server
     };
 
-    let account = AppleAccount::builder(&email.to_lowercase())
-        .anisette_provider(
-            RemoteV3AnisetteProvider::default()?
-                .set_serial_number("0".to_string())
-                .set_storage(create_sideloading_storage(app)?)
-                // just temporary while waiting for the anisette servers to start reporting this
-                .set_client_info_override(Some(AnisetteClientInfo {
-                    client_info:
-                        "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-                            .to_string(),
-                    user_agent: "akd/1.0 CFNetwork/811.5.4".to_string(),
-                }))
-                .set_url(&anisette_url),
-        )
-        .login(password, Box::new(tfa_closure))
-        .await;
-    let mut account = match account {
-        Ok(account) => account,
-        Err(e) => {
-            // The URL bag is fetched before any credentials are sent. When it fails,
-            // something between the device and Apple answered instead (VPN, ad
-            // blocker, DNS filter, captive portal...), so say exactly what came back.
-            if format!("{e:?}").contains("URL Bag") {
-                let diagnosis = diagnose_url_bag().await;
-                tracing::error!("URL bag diagnosis: {diagnosis}");
-                return Err(AppError::Auth(format!(
-                    "Could not reach Apple's sign-in server. This is a network problem, not a wrong password. Turn off VPNs, ad blockers or custom DNS, or try another network. Details: {diagnosis}"
-                )));
-            }
-            return Err(e.into());
-        }
+    // Apple only accepts sign-in requests whose User-Agent and X-MMe-Client-Info match
+    // the client that produced the anisette data, and answers 503 otherwise. Try
+    // iloader's usual identity first, then the anisette server's own identity.
+    let mac_identity = AnisetteClientInfo {
+        client_info:
+            "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+                .to_string(),
+        user_agent: "akd/1.0 CFNetwork/811.5.4".to_string(),
     };
+    let identities = [Some(mac_identity), None];
+    let attempts = identities.len();
+    let mut account = None;
+    for (attempt, identity) in identities.into_iter().enumerate() {
+        let using_override = identity.is_some();
+        let mut provider = RemoteV3AnisetteProvider::default()?
+            .set_serial_number("0".to_string())
+            .set_storage(create_sideloading_storage(app)?);
+        if identity.is_some() {
+            provider = provider.set_client_info_override(identity);
+        }
+        let provider = provider.set_url(&anisette_url);
+
+        let result = AppleAccount::builder(&email.to_lowercase())
+            .anisette_provider(provider)
+            .login(password, Box::new(tfa_closure.clone()))
+            .await;
+        match result {
+            Ok(a) => {
+                if !using_override {
+                    tracing::info!("Signed in with the anisette server's own client identity");
+                }
+                account = Some(a);
+                break;
+            }
+            Err(e) => {
+                let text = format!("{e:?}");
+                let rejected = text.contains("URL Bag") || text.contains("503");
+                if rejected && attempt + 1 < attempts {
+                    tracing::warn!(
+                        "Apple rejected the sign-in with iloader's client identity, retrying with the anisette server's own identity"
+                    );
+                    continue;
+                }
+                if rejected {
+                    let diagnosis = diagnose_url_bag(&anisette_url).await;
+                    tracing::error!("URL bag diagnosis: {diagnosis}");
+                    return Err(AppError::Auth(format!(
+                        "Apple's sign-in server rejected the request (not a wrong password). Details: {diagnosis}"
+                    )));
+                }
+                return Err(e.into());
+            }
+        }
+    }
+    let mut account = account.ok_or_else(|| AppError::Auth("Sign-in failed".into()))?;
 
     debug!("Logged in");
 
@@ -361,47 +384,78 @@ pub async fn delete_app_id(
     Ok(())
 }
 
-/// Fetches GrandSlam's URL bag the way isideload does and describes the response:
-/// status, final URL after redirects, content type and the start of the body.
-async fn diagnose_url_bag() -> String {
+/// Fetches GrandSlam's URL bag with several client identities and reports which ones
+/// Apple accepts (HTTP status for each), plus the start of the first rejected body.
+async fn diagnose_url_bag(anisette_url: &str) -> String {
     const URL_BAG: &str = "https://gsa.apple.com/grandslam/GsService2/lookup";
     let client = match reqwest::Client::builder().build() {
         Ok(c) => c,
         Err(e) => return format!("could not build HTTP client: {e}"),
     };
-    let response = client
-        .get(URL_BAG)
-        .header("User-Agent", "akd/1.0 CFNetwork/811.5.4")
-        .header(
-            "X-Mme-Client-Info",
-            "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
-        )
-        .header("Accept", "*/*")
-        .send()
-        .await;
-    match response {
-        Ok(resp) => {
-            let status = resp.status();
-            let final_url = resp.url().to_string();
-            let content_type = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("none")
-                .to_string();
-            let body = resp.text().await.unwrap_or_default();
-            let snippet: String = body
-                .chars()
-                .take(400)
-                .collect::<String>()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!(
-                "HTTP {status} from {final_url} (content-type: {content_type}, {} bytes). Body starts with: {snippet}",
-                body.len()
-            )
-        }
-        Err(e) => format!("request failed: {e}"),
+
+    let mut identities: Vec<(String, Option<(String, String)>)> = vec![
+        (
+            "iloader Mac".into(),
+            Some((
+                "akd/1.0 CFNetwork/811.5.4".into(),
+                "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>".into(),
+            )),
+        ),
+        (
+            "iTunes Windows".into(),
+            Some((
+                "akd/1.0 CFNetwork/808.1.4".into(),
+                "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>".into(),
+            )),
+        ),
+        ("no headers".into(), None),
+    ];
+
+    // The anisette server's own identity, which Apple expects to match its data.
+    let info_url = format!("{}/v3/client_info", anisette_url.trim_end_matches('/'));
+    match client.get(&info_url).send().await {
+        Ok(resp) => match resp
+            .text()
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string()))
+        {
+            Ok(v) => {
+                let ci = v.get("client_info").and_then(|x| x.as_str());
+                let ua = v.get("user_agent").and_then(|x| x.as_str());
+                if let (Some(ci), Some(ua)) = (ci, ua) {
+                    identities.insert(0, ("anisette server".into(), Some((ua.into(), ci.into()))));
+                }
+            }
+            Err(e) => tracing::warn!("Invalid client_info from {info_url}: {e}"),
+        },
+        Err(e) => tracing::warn!("Could not fetch {info_url}: {e}"),
     }
+
+    let mut results = Vec::new();
+    let mut first_body = None;
+    for (name, headers) in identities {
+        let mut request = client.get(URL_BAG).header("Accept", "text/x-xml-plist");
+        if let Some((ua, ci)) = &headers {
+            request = request.header("User-Agent", ua).header("X-Mme-Client-Info", ci);
+        }
+        match request.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() && first_body.is_none() {
+                    let body = resp.text().await.unwrap_or_default();
+                    first_body = Some(
+                        body.chars().take(200).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "),
+                    );
+                }
+                results.push(format!("{name}: HTTP {}", status.as_u16()));
+            }
+            Err(e) => results.push(format!("{name}: failed ({e})")),
+        }
+    }
+    format!(
+        "{}. First rejection body: {}",
+        results.join(", "),
+        first_body.unwrap_or_else(|| "none".into())
+    )
 }
