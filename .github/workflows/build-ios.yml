@@ -11,7 +11,8 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-15
+    # Intel runners: the arm64 macOS pool is often at capacity on GitHub.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
 
