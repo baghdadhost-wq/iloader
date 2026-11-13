@@ -29,6 +29,13 @@ use crate::{
     sideload::{SideloaderGuard, SideloaderMutex},
 };
 
+/// Anisette servers SideStore uses, tried after the configured one fails.
+const FALLBACK_ANISETTE_SERVERS: &[&str] = &[
+    "https://new.ani.sidestore.io",
+    "https://ani3.stikstore.app",
+    "https://mac-ani.jkcoxson.com",
+];
+
 #[tauri::command]
 pub async fn login_new(
     handle: AppHandle,
@@ -198,61 +205,88 @@ async fn login(
         anisette_server
     };
 
-    // Apple only accepts sign-in requests whose User-Agent and X-MMe-Client-Info match
-    // the client that produced the anisette data, and answers 503 otherwise. Try
-    // iloader's usual identity first, then the anisette server's own identity.
+    // Sign in the way SideStore (AltSign) does: Apple only accepts requests whose
+    // User-Agent and X-MMe-Client-Info match the client that produced the anisette
+    // data, so use the anisette server's own identity first, and iloader's fixed Mac
+    // identity only as a fallback. If an anisette server fails, try the servers
+    // SideStore uses.
     let mac_identity = AnisetteClientInfo {
         client_info:
             "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
                 .to_string(),
         user_agent: "akd/1.0 CFNetwork/811.5.4".to_string(),
     };
-    let identities = [Some(mac_identity), None];
-    let attempts = identities.len();
-    let mut account = None;
-    for (attempt, identity) in identities.into_iter().enumerate() {
-        let using_override = identity.is_some();
-        let mut provider = RemoteV3AnisetteProvider::default()?
-            .set_serial_number("0".to_string())
-            .set_storage(create_sideloading_storage(app)?);
-        if identity.is_some() {
-            provider = provider.set_client_info_override(identity);
+    let mut servers = vec![anisette_url.trim_end_matches('/').to_string()];
+    for fallback in FALLBACK_ANISETTE_SERVERS {
+        if !servers.iter().any(|s| s == fallback) {
+            servers.push(fallback.to_string());
         }
-        let provider = provider.set_url(&anisette_url);
+    }
 
-        let result = AppleAccount::builder(&email.to_lowercase())
-            .anisette_provider(provider)
-            .login(password, Box::new(tfa_closure.clone()))
-            .await;
-        match result {
-            Ok(a) => {
-                if !using_override {
-                    tracing::info!("Signed in with the anisette server's own client identity");
-                }
-                account = Some(a);
-                break;
+    let mut account = None;
+    let mut last_error: Option<String> = None;
+    'servers: for server in &servers {
+        let identities = [None, Some(mac_identity.clone())];
+        let attempts = identities.len();
+        for (attempt, identity) in identities.into_iter().enumerate() {
+            let identity_name = if identity.is_some() { "iloader Mac" } else { "anisette server" };
+            tracing::info!("Signing in with {server} using the {identity_name} identity");
+
+            let mut provider = RemoteV3AnisetteProvider::default()?
+                .set_serial_number("0".to_string())
+                .set_storage(create_sideloading_storage(app)?);
+            if identity.is_some() {
+                provider = provider.set_client_info_override(identity);
             }
-            Err(e) => {
-                let text = format!("{e:?}");
-                let rejected = text.contains("URL Bag") || text.contains("503");
-                if rejected && attempt + 1 < attempts {
-                    tracing::warn!(
-                        "Apple rejected the sign-in with iloader's client identity, retrying with the anisette server's own identity"
-                    );
-                    continue;
+            let provider = provider.set_url(server);
+
+            let result = AppleAccount::builder(&email.to_lowercase())
+                .anisette_provider(provider)
+                .login(password, Box::new(tfa_closure.clone()))
+                .await;
+            match result {
+                Ok(a) => {
+                    tracing::info!("Signed in with {server} using the {identity_name} identity");
+                    account = Some(a);
+                    break 'servers;
                 }
-                if rejected {
-                    let diagnosis = diagnose_url_bag(&anisette_url).await;
-                    tracing::error!("URL bag diagnosis: {diagnosis}");
-                    return Err(AppError::Auth(format!(
-                        "Apple's sign-in server rejected the request (not a wrong password). Details: {diagnosis}"
-                    )));
+                Err(e) => {
+                    let text = format!("{e:?}");
+                    let lower = text.to_lowercase();
+                    // Apple rejected the client identity (503 page / URL bag).
+                    let rejected = text.contains("URL Bag") || text.contains("503");
+                    // The anisette server itself failed (unreachable, provisioning...).
+                    let anisette_failed = lower.contains("anisette")
+                        || lower.contains("provision")
+                        || lower.contains("client_info")
+                        || lower.contains("websocket");
+                    tracing::warn!("Sign-in with {server} ({identity_name}) failed: {e}");
+                    last_error = Some(format!("{e}"));
+                    if rejected && attempt + 1 < attempts {
+                        continue;
+                    }
+                    if rejected || anisette_failed {
+                        continue 'servers;
+                    }
+                    // Wrong password, 2FA, locked account...: don't retry.
+                    return Err(e.into());
                 }
-                return Err(e.into());
             }
         }
     }
-    let mut account = account.ok_or_else(|| AppError::Auth("Sign-in failed".into()))?;
+
+    let mut account = match account {
+        Some(account) => account,
+        None => {
+            let diagnosis = diagnose_url_bag(&anisette_url).await;
+            tracing::error!("URL bag diagnosis: {diagnosis}");
+            return Err(AppError::Auth(format!(
+                "Sign-in failed with every anisette server ({}). Last error: {}. Details: {diagnosis}",
+                servers.join(", "),
+                last_error.unwrap_or_default()
+            )));
+        }
+    };
 
     debug!("Logged in");
 
