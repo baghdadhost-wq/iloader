@@ -51,11 +51,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
-            let log_dir = app
-                .path()
-                .app_data_dir()
-                .expect("failed to get app data dir")
-                .join("logs");
+            // On iOS, keep logs in Documents so they show up in the Files app
+            // (UIFileSharingEnabled) and can be shared after a crash.
+            #[cfg(target_os = "ios")]
+            let log_base = app.path().document_dir();
+            #[cfg(not(target_os = "ios"))]
+            let log_base = app.path().app_data_dir();
+            let log_dir = log_base.expect("failed to get log base dir").join("logs");
 
             std::fs::create_dir_all(&log_dir).ok();
 
