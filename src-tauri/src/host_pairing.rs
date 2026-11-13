@@ -93,7 +93,9 @@ pub async fn start_host_pairing(app: AppHandle) -> Result<DeviceInfo, AppError> 
         old.cancel();
     }
 
+    info!("host pairing: starting background task");
     let _background = background::Task::begin();
+    info!("host pairing: background task started");
     let result = tokio::select! {
         _ = token.cancelled() => Err(AppError::Canceled("Pairing".into())),
         r = tokio::time::timeout(PAIRING_TIMEOUT, run(&app)) => r.unwrap_or_else(|_| {
@@ -133,7 +135,9 @@ async fn run(app: &AppHandle) -> Result<DeviceInfo, AppError> {
         ));
     }
 
+    info!("host pairing: requesting notification permission");
     notifications::request_permission(app);
+    info!("host pairing: opening pairing port");
 
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
         .await
@@ -146,10 +150,12 @@ async fn run(app: &AppHandle) -> Result<DeviceInfo, AppError> {
     // The device only runs pair-setup with a host it doesn't know yet, so a fresh
     // identity each time is intended. The identifier is derived from the name, so the
     // device replaces its previous record for iloader instead of adding another one.
+    info!("host pairing: generating identity (port {port})");
     let pairing_file = RpPairingFile::generate(HOST_NAME);
     let host_info = PairableHostInfo::generate(HOST_NAME, HOST_MODEL);
     let identifier = pairing_file.identifier.clone();
     let txt = host_info.mdns_txt_records(&identifier);
+    info!("host pairing: registering Bonjour service {identifier} with {} TXT entries", txt.len());
 
     let _advertisement = bonjour::register(&identifier, PAIRABLE_HOST_SERVICE_TYPE, port, &txt)?;
     info!("Advertising {PAIRABLE_HOST_SERVICE_TYPE} on port {port}");
