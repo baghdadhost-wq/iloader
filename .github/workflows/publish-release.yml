@@ -1,0 +1,58 @@
+name: Publish release from finished builds
+
+# Pushing a tag like "ios-v1" publishes the artifacts of already finished
+# workflow runs as a GitHub release. The run IDs live in release-runs.txt.
+on:
+  push:
+    tags:
+      - "ios-v*"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dl out
+          while read -r run; do
+            [ -z "$run" ] && continue
+            case "$run" in \#*) continue ;; esac
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --dir "dl/$run"
+          done < .github/release-runs.txt
+          find dl -type f | sort
+
+      - name: Collect files
+        run: |
+          for dir in dl/*/*/; do
+            name=$(basename "$dir")
+            count=$(find "$dir" -type f | wc -l)
+            if [ "$count" -eq 1 ]; then
+              f=$(find "$dir" -type f)
+              case "$name" in
+                iloader-ios-unsigned) cp "$f" "out/iloader-ios-unsigned.ipa" ;;
+                *) cp "$f" "out/$(basename "$f")" ;;
+              esac
+            else
+              (cd "$dir" && zip -qr "$OLDPWD/out/$name.zip" .)
+            fi
+          done
+          ls -la out
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "iloader for iPad (Wi-Fi + pairing without a computer) — $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md

@@ -1,0 +1,6 @@
+# iOS/iPadOS unsigned IPA (a537125)
+43501785893
+# Windows + Linux (a537125)
+43501785929
+# macOS universal DMG (920fe82)
+43499462244
