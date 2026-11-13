@@ -198,7 +198,7 @@ async fn login(
         anisette_server
     };
 
-    let mut account = AppleAccount::builder(&email.to_lowercase())
+    let account = AppleAccount::builder(&email.to_lowercase())
         .anisette_provider(
             RemoteV3AnisetteProvider::default()?
                 .set_serial_number("0".to_string())
@@ -213,7 +213,23 @@ async fn login(
                 .set_url(&anisette_url),
         )
         .login(password, Box::new(tfa_closure))
-        .await?;
+        .await;
+    let mut account = match account {
+        Ok(account) => account,
+        Err(e) => {
+            // The URL bag is fetched before any credentials are sent. When it fails,
+            // something between the device and Apple answered instead (VPN, ad
+            // blocker, DNS filter, captive portal...), so say exactly what came back.
+            if format!("{e:?}").contains("URL Bag") {
+                let diagnosis = diagnose_url_bag().await;
+                tracing::error!("URL bag diagnosis: {diagnosis}");
+                return Err(AppError::Auth(format!(
+                    "Could not reach Apple's sign-in server. This is a network problem, not a wrong password. Turn off VPNs, ad blockers or custom DNS, or try another network. Details: {diagnosis}"
+                )));
+            }
+            return Err(e.into());
+        }
+    };
 
     debug!("Logged in");
 
@@ -343,4 +359,49 @@ pub async fn delete_app_id(
     dev_session.delete_app_id(&team, &app_id_id, None).await?;
 
     Ok(())
+}
+
+/// Fetches GrandSlam's URL bag the way isideload does and describes the response:
+/// status, final URL after redirects, content type and the start of the body.
+async fn diagnose_url_bag() -> String {
+    const URL_BAG: &str = "https://gsa.apple.com/grandslam/GsService2/lookup";
+    let client = match reqwest::Client::builder().build() {
+        Ok(c) => c,
+        Err(e) => return format!("could not build HTTP client: {e}"),
+    };
+    let response = client
+        .get(URL_BAG)
+        .header("User-Agent", "akd/1.0 CFNetwork/811.5.4")
+        .header(
+            "X-Mme-Client-Info",
+            "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+        )
+        .header("Accept", "*/*")
+        .send()
+        .await;
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let final_url = resp.url().to_string();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("none")
+                .to_string();
+            let body = resp.text().await.unwrap_or_default();
+            let snippet: String = body
+                .chars()
+                .take(400)
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "HTTP {status} from {final_url} (content-type: {content_type}, {} bytes). Body starts with: {snippet}",
+                body.len()
+            )
+        }
+        Err(e) => format!("request failed: {e}"),
+    }
 }
