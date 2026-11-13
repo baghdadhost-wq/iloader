@@ -36,6 +36,16 @@ use tracing_subscriber::{Layer, Registry, fmt, layer::SubscriberExt, util::Subsc
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Both aws-lc-rs and ring end up in the dependency tree, so rustls can't pick a
+    // crypto provider by itself and panics on the first TLS connection that needs one
+    // (e.g. the anisette provisioning WebSocket). On iOS this function is the entry
+    // point, so this has to happen here rather than in main().
+    // To be quite honest, I have no idea how ring has made its way into the dependency tree in some cases.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+    isideload::init().expect("Failed to initialize error reporting");
+
     let builder = tauri::Builder::default();
 
     // The updater is desktop-only (see the target-specific dependency in Cargo.toml).
