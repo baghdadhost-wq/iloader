@@ -341,12 +341,35 @@ async fn create_lockdown_record(
     let udid = lockdown_string(&mut lockdown, "UniqueDeviceID").await?;
     let version = lockdown_string(&mut lockdown, "ProductVersion").await?;
 
-    let host_id = uuid::Uuid::new_v4().to_string().to_uppercase();
+    // Over the trusted (tunnelled) lockdown service the device ties the request to
+    // the host identity from the remote pairing, and answers InvalidHostID to an
+    // unknown HostID. Use that identity's identifier first, then a random one.
     let system_buid = uuid::Uuid::new_v4().to_string().to_uppercase();
-    let mut pairing = lockdown
-        .pair(host_id, system_buid, Some(HOST_NAME))
-        .await
-        .map_err(|e| AppError::LockdownPairing("Failed to create a lockdown pairing record".into(), e.to_string()))?;
+    let candidates = [
+        file.identifier().to_uppercase(),
+        uuid::Uuid::new_v4().to_string().to_uppercase(),
+    ];
+    let mut last_error = None;
+    let mut paired = None;
+    for host_id in candidates {
+        info!("host pairing: requesting lockdown pair record with HostID {host_id}");
+        match lockdown.pair(host_id.clone(), system_buid.clone(), Some(HOST_NAME)).await {
+            Ok(record) => {
+                paired = Some(record);
+                break;
+            }
+            Err(e) => {
+                warn!("Lockdown Pair with HostID {host_id} failed: {e}");
+                last_error = Some(e);
+            }
+        }
+    }
+    let mut pairing = paired.ok_or_else(|| {
+        AppError::LockdownPairing(
+            "Failed to create a lockdown pairing record".into(),
+            last_error.map(|e| e.to_string()).unwrap_or_default(),
+        )
+    })?;
     pairing.udid = Some(udid.clone());
 
     // Lets lockdown accept this record over Wi-Fi, as iloader does over USB.
