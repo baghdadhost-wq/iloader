@@ -5,7 +5,7 @@ use std::{
 
 // used https://github.com/jkcoxson/idevice_pair/ as a guide
 use idevice::{
-    IdeviceError, IdeviceService,
+    IdeviceError, IdeviceService, RsdService,
     afc::AfcClient,
     house_arrest::HouseArrestClient,
     installation_proxy::InstallationProxyClient,
@@ -23,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::{
-    device::{DeviceInfo, DeviceInfoMutex, get_provider},
+    device::{DeviceInfo, DeviceInfoMutex, DeviceInfoWithPairing, get_provider, rp_target},
     error::AppError,
+    rp_tunnel,
     secure_storage::{create_sideloading_storage, keyring_available},
 };
 
@@ -171,7 +172,69 @@ pub async fn place_file(
     let house_arrest_client = HouseArrestClient::connect(provider).await.map_err(|e| {
         AppError::HouseArrest("Failed to connect to house arrest".into(), e.to_string())
     })?;
+    place_with(house_arrest_client, pairing, bundle_id, path).await
+}
 
+/// Places the selected device's pairing file into an app's Documents, over lockdown or
+/// through a CoreDevice tunnel for devices paired without a computer.
+pub async fn place_pairing(
+    device: &DeviceInfoWithPairing,
+    bundle_id: String,
+    path: String,
+) -> Result<(), AppError> {
+    if let Some(target) = rp_target(device) {
+        let (address, pairing) = target?;
+        let mut tunnel = rp_tunnel::open_from_bytes(address, &pairing).await?;
+        let client = HouseArrestClient::connect_rsd(&mut tunnel.adapter, &mut tunnel.handshake)
+            .await
+            .map_err(|e| {
+                AppError::HouseArrest("Failed to connect to house arrest".into(), e.to_string())
+            })?;
+        return place_with(client, pairing, bundle_id, path).await;
+    }
+    let provider = get_provider(&device.info).await?;
+    place_file(device.pairing.clone(), &provider, bundle_id, path).await
+}
+
+/// The device's user-installed apps, over lockdown or through a CoreDevice tunnel.
+async fn user_apps(
+    device: &DeviceInfoWithPairing,
+) -> Result<HashMap<String, plist::Value>, AppError> {
+    let connect_err = |e: IdeviceError| {
+        AppError::DeviceComsWithMessage(
+            "Failed to connect to installation proxy".into(),
+            e.to_string(),
+        )
+    };
+    // The tunnel must outlive the client that talks through it.
+    let mut _tunnel = None;
+    let mut installation_proxy = if let Some(target) = rp_target(device) {
+        let (address, pairing) = target?;
+        let tunnel = _tunnel.insert(rp_tunnel::open_from_bytes(address, &pairing).await?);
+        InstallationProxyClient::connect_rsd(&mut tunnel.adapter, &mut tunnel.handshake)
+            .await
+            .map_err(connect_err)?
+    } else {
+        let provider = get_provider(&device.info).await?;
+        InstallationProxyClient::connect(&provider)
+            .await
+            .map_err(connect_err)?
+    };
+
+    installation_proxy
+        .get_apps(Some("User"), None)
+        .await
+        .map_err(|e| {
+            AppError::DeviceComsWithMessage("Failed to get installed apps".into(), e.to_string())
+        })
+}
+
+async fn place_with(
+    house_arrest_client: HouseArrestClient,
+    pairing: Vec<u8>,
+    bundle_id: String,
+    path: String,
+) -> Result<(), AppError> {
     let mut afc_client = house_arrest_client
         .vend_documents(bundle_id)
         .await
@@ -234,9 +297,7 @@ pub async fn place_pairing_cmd(
         }
     };
 
-    let provider = get_provider(&device.info).await?;
-
-    place_file(device.pairing, &provider, bundle_id, path).await
+    Box::pin(place_pairing(&device, bundle_id, path)).await
 }
 
 // prompt for a location to save the pairing file, then export it there. This is for advanced users who want to use the pairing file with other tools, or just want a backup of it. Normal users should use the "Place" button next to the app they want to pair with instead, which will transfer the pairing file automatically.
@@ -472,23 +533,7 @@ pub async fn installed_pairing_apps(
             None => return Err(AppError::NoDeviceSelected),
         }
     };
-    let provider = get_provider(&device.info).await?;
-    let mut installation_proxy =
-        InstallationProxyClient::connect(&provider)
-            .await
-            .map_err(|e| {
-                AppError::DeviceComsWithMessage(
-                    "Failed to connect to installation proxy".into(),
-                    e.to_string(),
-                )
-            })?;
-
-    let installed_apps = installation_proxy
-        .get_apps(Some("User"), None)
-        .await
-        .map_err(|e| {
-            AppError::DeviceComsWithMessage("Failed to get installed apps".into(), e.to_string())
-        })?;
+    let installed_apps = Box::pin(user_apps(&device)).await?;
 
     let mut installed = HashMap::new();
     for (bundle_id, app) in installed_apps {
@@ -520,26 +565,10 @@ pub async fn installed_pairing_apps(
 }
 
 pub async fn get_sidestore_info(
-    device: &DeviceInfo,
+    device: &DeviceInfoWithPairing,
     live_container: bool,
 ) -> Result<Option<PairingAppInfo>, AppError> {
-    let provider = get_provider(device).await?;
-    let mut installation_proxy =
-        InstallationProxyClient::connect(&provider)
-            .await
-            .map_err(|e| {
-                AppError::DeviceComsWithMessage(
-                    "Failed to connect to installation proxy".into(),
-                    e.to_string(),
-                )
-            })?;
-
-    let installed_apps = installation_proxy
-        .get_apps(Some("User"), None)
-        .await
-        .map_err(|e| {
-            AppError::DeviceComsWithMessage("Failed to get installed apps".into(), e.to_string())
-        })?;
+    let installed_apps = user_apps(&device).await?;
 
     for (bundle_id, app) in installed_apps {
         let n = app

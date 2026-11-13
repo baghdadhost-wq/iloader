@@ -39,6 +39,14 @@ pub struct DeviceInfo {
     /// `None` for devices discovered through usbmuxd.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    /// The stored pairing is an RPPairing record: reach the device through a
+    /// CoreDevice tunnel (rp_tunnel.rs) instead of lockdown.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub remote_pairing: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -108,6 +116,8 @@ struct SavedNetworkDevice {
     udid: String,
     version: String,
     address: String,
+    #[serde(default)]
+    remote_pairing: bool,
 }
 
 static NETWORK_PAIRINGS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
@@ -163,6 +173,7 @@ fn saved_to_info(index: usize, device: &SavedNetworkDevice) -> DeviceInfo {
         connection_type: "Wi-Fi".to_string(),
         version: device.version.clone(),
         address: Some(device.address.clone()),
+        remote_pairing: device.remote_pairing,
     }
 }
 
@@ -268,7 +279,7 @@ async fn add_network_device_inner(
     let version = lockdown_string(&mut lockdown, "ProductVersion").await?;
     let udid = lockdown_string(&mut lockdown, "UniqueDeviceID").await?;
 
-    store_network_device(&app, address, pairing, name, udid, version)
+    store_network_device(&app, address, pairing, name, udid, version, false)
 }
 
 /// Saves a Wi-Fi device and its pairing file so it shows up in the device list.
@@ -279,6 +290,7 @@ pub(crate) fn store_network_device(
     name: String,
     udid: String,
     version: String,
+    remote_pairing: bool,
 ) -> Result<DeviceInfo, AppError> {
     let key = network_pairing_key(&udid);
     with_pairing_storage(app, |storage| {
@@ -293,6 +305,7 @@ pub(crate) fn store_network_device(
         udid: udid.clone(),
         version,
         address,
+        remote_pairing,
     };
     let index = match saved.iter().position(|d| d.udid == udid) {
         Some(i) => {
@@ -421,6 +434,7 @@ async fn list_usbmuxd_devices() -> Result<Vec<Result<DeviceInfo, AppError>>, App
                     connection_type,
                     version,
                     address: None,
+                    remote_pairing: false,
                 })
             }
         })
@@ -506,7 +520,21 @@ pub async fn get_usbmuxd() -> Result<UsbmuxdConnection, AppError> {
         .map_err(|e| AppError::Usbmuxd("Failed to connect to usbmuxd".into(), e.to_string()))
 }
 
+/// For devices reached through a CoreDevice tunnel: their address and RPPairing record.
+pub fn rp_target(device: &DeviceInfoWithPairing) -> Option<Result<(IpAddr, Vec<u8>), AppError>> {
+    if !device.info.remote_pairing {
+        return None;
+    }
+    let address = device.info.address.as_deref().unwrap_or_default();
+    Some(parse_address(address).map(|ip| (ip, device.pairing.clone())))
+}
+
 pub async fn get_provider(device_info: &DeviceInfo) -> Result<AnyProvider, AppError> {
+    if device_info.remote_pairing {
+        return Err(AppError::DeviceComs(
+            "This device was paired without a computer and is reached through a tunnel; this action doesn't support that yet.".into(),
+        ));
+    }
     if let Some(address) = &device_info.address {
         let pairing = network_pairings()
             .lock()

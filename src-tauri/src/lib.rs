@@ -10,6 +10,7 @@ mod pairing;
 mod secure_storage;
 mod error;
 mod host_pairing;
+mod rp_tunnel;
 mod logging;
 mod operation;
 

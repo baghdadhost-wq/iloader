@@ -7,10 +7,10 @@
 //! PIN iloader shows. This works both for the device iloader runs on and for other
 //! devices on the same network.
 //!
-//! The result is an RPPairing (remote pairing) record. iloader then uses it once to
-//! open a tunnel to the device and create a classic lockdown pairing record over the
-//! device's trusted lockdown service, and saves both combined, the same format iloader
-//! produces over USB. The device is then added to the Wi-Fi device list.
+//! The result is an RPPairing (remote pairing) record. iOS doesn't issue a classic
+//! lockdown pairing record over the trusted tunnel (it answers InvalidHostID), so the
+//! device is saved with the RPPairing record and reached through a CoreDevice tunnel
+//! from then on (rp_tunnel.rs).
 
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -22,28 +22,21 @@ use std::{
 };
 
 use idevice::{
-    IdeviceError, RsdService,
-    lockdown::LockdownClient,
+    IdeviceError,
     remote_pairing::{
-        PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RemotePairingClient,
-        RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native,
+        PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
     },
-    rsd::RsdHandshake,
-    tcp::adapter::Adapter,
 };
-use plist_macro::{plist, plist_to_xml_bytes};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    task::JoinSet,
-};
+use tokio::{net::TcpListener, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    device::{DeviceInfo, lockdown_string, store_network_device},
+    device::{DeviceInfo, store_network_device},
     error::AppError,
+    rp_tunnel,
 };
 
 /// Name shown on the device in Settings ("Pair with iloader").
@@ -51,13 +44,10 @@ const HOST_NAME: &str = "iloader";
 /// Hardware model advertised to the device. iOS uses it for the icon next to the name;
 /// this is the value idevice's reference implementation uses.
 const HOST_MODEL: &str = "Mac17,7";
-/// Port of the device's remote pairing service.
-const REMOTE_PAIRING_PORT: u16 = 49152;
 /// LocalDevVPN / StosVPN route this address back to the device itself.
 const SELF_ADDRESS: Ipv4Addr = Ipv4Addr::new(10, 7, 0, 1);
 /// The device stops offering the pairing after a while, so don't wait forever.
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 const EVENT: &str = "host-pairing";
 
@@ -78,10 +68,6 @@ fn emit(app: &AppHandle, event: PairingEvent) {
     if let Err(e) = app.emit(EVENT, event) {
         warn!("Failed to emit host pairing event: {e}");
     }
-}
-
-fn rp_err(context: &str) -> impl Fn(IdeviceError) -> AppError + '_ {
-    move |e| AppError::RemotePairing(format!("{context}: {e}"))
 }
 
 /// Starts advertising iloader as a pairable host and waits for a device to pair.
@@ -191,10 +177,13 @@ async fn run(app: &AppHandle) -> Result<DeviceInfo, AppError> {
         paired.peer
     };
 
-    let record = tokio::time::timeout(
-        Duration::from_secs(60),
-        create_lockdown_record(paired.file, address),
-    )
+    // iOS won't issue a classic lockdown pairing record over the trusted tunnel
+    // (InvalidHostID), so keep the RPPairing record and use the tunnel from now on.
+    let mut file = paired.file;
+    let info = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut tunnel = rp_tunnel::open(address, &mut file).await?;
+        tunnel.device_info().await
+    })
     .await
     .map_err(|_| {
         AppError::RemotePairing(if paired.this_device {
@@ -207,10 +196,11 @@ async fn run(app: &AppHandle) -> Result<DeviceInfo, AppError> {
     store_network_device(
         app,
         address.to_string(),
-        record.pairing,
-        record.name,
-        record.udid,
-        record.version,
+        file.to_bytes(),
+        info.name,
+        info.udid,
+        info.version,
+        true,
     )
 }
 
@@ -272,149 +262,6 @@ async fn wait_for_device(
             },
         }
     }
-}
-
-struct LockdownRecord {
-    pairing: Vec<u8>,
-    name: String,
-    udid: String,
-    version: String,
-}
-
-/// Opens a tunnel with the new RPPairing record and asks the device's trusted lockdown
-/// service for a classic pairing record, which the rest of iloader (and SideStore) uses.
-async fn create_lockdown_record(
-    mut file: RpPairingFile,
-    address: IpAddr,
-) -> Result<LockdownRecord, AppError> {
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((address, REMOTE_PAIRING_PORT)))
-        .await
-        .map_err(|_| AppError::RemotePairing(format!("Timed out connecting to {address}")))?
-        .map_err(|e| AppError::RemotePairing(format!("Could not reach the device at {address}: {e}")))?;
-
-    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), HOST_NAME);
-    // Verify only: `connect` would fall back to a new pairing and wait for a PIN.
-    client
-        .attempt_pair_verify()
-        .await
-        .map_err(rp_err("The device refused the new pairing"))?;
-    client
-        .validate_pairing(&mut file)
-        .await
-        .map_err(rp_err("The device did not accept the new pairing"))?;
-
-    let tunnel_port = client
-        .create_tcp_listener()
-        .await
-        .map_err(rp_err("Could not open a tunnel"))?;
-    let stream = TcpStream::connect((address, tunnel_port))
-        .await
-        .map_err(|e| AppError::RemotePairing(format!("Could not open a tunnel: {e}")))?;
-    let tunnel = connect_tls_psk_tunnel_native(stream, client.encryption_key())
-        .await
-        .map_err(rp_err("Could not open a tunnel"))?;
-
-    let parse = |a: &str| {
-        a.parse::<IpAddr>()
-            .map_err(|e| AppError::RemotePairing(format!("The tunnel returned an invalid address: {e}")))
-    };
-    let ours = parse(&tunnel.info.client_address)?;
-    let theirs = parse(&tunnel.info.server_address)?;
-    let mtu = tunnel.info.mtu as usize;
-    let rsd_port = tunnel.info.server_rsd_port;
-    let mut adapter = Adapter::new(Box::new(tunnel.into_inner()), ours, theirs);
-    adapter.set_mss(mtu.min(8192).saturating_sub(60));
-    let mut adapter = adapter.to_async_handle();
-
-    let rsd_stream = adapter
-        .connect(rsd_port)
-        .await
-        .map_err(|e| AppError::RemotePairing(format!("Could not reach the device's services: {e}")))?;
-    let mut handshake = RsdHandshake::new(rsd_stream)
-        .await
-        .map_err(rp_err("Could not reach the device's services"))?;
-    let mut lockdown = LockdownClient::connect_rsd(&mut adapter, &mut handshake)
-        .await
-        .map_err(rp_err("Could not connect to lockdown"))?;
-
-    let name = lockdown_string(&mut lockdown, "DeviceName").await?;
-    let udid = lockdown_string(&mut lockdown, "UniqueDeviceID").await?;
-    let version = lockdown_string(&mut lockdown, "ProductVersion").await?;
-
-    // Over the trusted (tunnelled) lockdown service the device ties the request to
-    // the host identity from the remote pairing, and answers InvalidHostID to an
-    // unknown HostID. Use that identity's identifier first, then a random one.
-    let system_buid = uuid::Uuid::new_v4().to_string().to_uppercase();
-    let candidates = [
-        file.identifier().to_uppercase(),
-        uuid::Uuid::new_v4().to_string().to_uppercase(),
-    ];
-    let mut last_error = None;
-    let mut paired = None;
-    for host_id in candidates {
-        info!("host pairing: requesting lockdown pair record with HostID {host_id}");
-        match lockdown.pair(host_id.clone(), system_buid.clone(), Some(HOST_NAME)).await {
-            Ok(record) => {
-                paired = Some(record);
-                break;
-            }
-            Err(e) => {
-                warn!("Lockdown Pair with HostID {host_id} failed: {e}");
-                last_error = Some(e);
-            }
-        }
-    }
-    let mut pairing = paired.ok_or_else(|| {
-        AppError::LockdownPairing(
-            "Failed to create a lockdown pairing record".into(),
-            last_error.map(|e| e.to_string()).unwrap_or_default(),
-        )
-    })?;
-    pairing.udid = Some(udid.clone());
-
-    // Lets lockdown accept this record over Wi-Fi, as iloader does over USB.
-    if let Err(e) = enable_wifi_debugging(&mut lockdown).await {
-        warn!("Setting EnableWifiDebugging without a session failed ({e}), retrying in a session");
-        match lockdown.start_session(&pairing).await {
-            Ok(_) => {
-                if let Err(e) = enable_wifi_debugging(&mut lockdown).await {
-                    warn!("Failed to enable Wi-Fi debugging: {e}");
-                }
-            }
-            Err(e) => warn!("Failed to start a lockdown session to enable Wi-Fi debugging: {e}"),
-        }
-    }
-
-    let lockdown_bytes = pairing
-        .serialize()
-        .map_err(|e| AppError::LockdownPairing("Failed to serialize pairing record".into(), e.to_string()))?;
-    let lockdown_plist = plist::Value::from_reader_xml(std::io::Cursor::new(lockdown_bytes))
-        .map_err(|e| AppError::LockdownPairing("Invalid lockdown pairing record".into(), e.to_string()))?;
-    let rp_plist = plist::Value::from_reader_xml(std::io::Cursor::new(file.to_bytes()))
-        .map_err(|e| AppError::RemotePairing(format!("Invalid RPPairing record: {e}")))?;
-
-    // Same combined format iloader writes over USB (see pairing.rs).
-    let combined = plist!(dict {
-        :< lockdown_plist,
-        :< rp_plist,
-    });
-
-    Ok(LockdownRecord {
-        pairing: plist_to_xml_bytes(&combined),
-        name,
-        udid,
-        version,
-    })
-}
-
-async fn enable_wifi_debugging(lockdown: &mut LockdownClient) -> Result<(), IdeviceError> {
-    lockdown
-        .set_value(
-            "EnableWifiDebugging",
-            true.into(),
-            Some("com.apple.mobile.wireless_lockdown"),
-        )
-        .await
 }
 
 // ---------------------------------------------------------------------------

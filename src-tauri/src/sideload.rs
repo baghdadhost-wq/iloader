@@ -1,13 +1,15 @@
 use std::{path::PathBuf, sync::Mutex};
 
 use crate::{
-    device::{DeviceInfoMutex, get_provider},
+    device::{DeviceInfoMutex, get_provider, rp_target},
     error::AppError,
     operation::Operation,
-    pairing::{get_sidestore_info, place_file},
+    pairing::{get_sidestore_info, place_pairing},
+    rp_tunnel,
 };
 use isideload::{
-    sideload::{application::SpecialApp, sideloader::Sideloader},
+    dev::devices::DevicesApi,
+    sideload::{application::SpecialApp, install::install_app_rsd, sideloader::Sideloader},
     util::callbacks::{ExtensionsBehaviorCallbackBox, MaxCertsCallbackBox},
 };
 use tauri::{AppHandle, Manager, State, Window};
@@ -59,9 +61,16 @@ pub async fn sideload(
         }
     };
 
-    let provider = get_provider(&device.info).await?;
-
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
+
+    if let Some(target) = rp_target(&device) {
+        let (address, pairing) = target?;
+        // Boxed: tunnel futures are large and command futures start on the main thread.
+        return Box::pin(sideload_through_tunnel(sideloader.get_mut(), address, &pairing, app_path))
+            .await;
+    }
+
+    let provider = get_provider(&device.info).await?;
 
     let special = sideloader
         .get_mut()
@@ -77,6 +86,44 @@ pub async fn sideload(
     Ok(special)
 }
 
+/// Signs and installs an app on a device paired without a computer, which is only
+/// reachable through a CoreDevice tunnel (see rp_tunnel.rs).
+async fn sideload_through_tunnel(
+    sideloader: &mut Sideloader<MaxCertsCallbackBox, ExtensionsBehaviorCallbackBox>,
+    address: std::net::IpAddr,
+    pairing: &[u8],
+    app_path: String,
+) -> Result<Option<SpecialApp>, AppError> {
+    // Short tunnel for the device's identity; signing can take a while, so the
+    // install opens a fresh one afterwards.
+    let info = {
+        let mut tunnel = rp_tunnel::open_from_bytes(address, pairing).await?;
+        tunnel.device_info().await?
+    };
+
+    let team = sideloader.get_team().await?;
+    sideloader
+        .get_dev_session()
+        .ensure_device_registered(&team, &info.name, &info.udid, None)
+        .await?;
+
+    let (signed_app, special) = sideloader
+        .sign_app(
+            PathBuf::from(app_path),
+            Some(team),
+            true,
+            None::<fn(f32) -> std::future::Ready<()>>,
+            Some(pairing),
+            Some(&info.udid),
+        )
+        .await?;
+
+    let mut tunnel = rp_tunnel::open_from_bytes(address, pairing).await?;
+    install_app_rsd(&mut tunnel.adapter, &mut tunnel.handshake, &signed_app, |_| {}).await?;
+
+    Ok(special)
+}
+
 #[tauri::command]
 pub async fn sideload_operation(
     window: Window,
@@ -88,7 +135,7 @@ pub async fn sideload_operation(
     op.start("install")?;
     op.fail_if_err(
         "install",
-        sideload(device_state, sideloader_state, app_path).await,
+        Box::pin(sideload(device_state, sideloader_state, app_path)).await,
     )?;
     op.complete("install")?;
     Ok(())
@@ -156,14 +203,12 @@ pub async fn install_sidestore_operation(
     op.move_on("install", "pairing")?;
     let sidestore_info = op.fail_if_err(
         "pairing",
-        get_sidestore_info(&device.info, live_container).await,
+        Box::pin(get_sidestore_info(&device, live_container)).await,
     )?;
     if let Some(info) = sidestore_info {
-        let provider = op.fail_if_err("pairing", get_provider(&device.info).await)?;
-
         op.fail_if_err(
             "pairing",
-            place_file(device.pairing, &provider, info.bundle_id, info.path).await,
+            Box::pin(place_pairing(&device, info.bundle_id, info.path)).await,
         )?;
     } else {
         return op.fail(
