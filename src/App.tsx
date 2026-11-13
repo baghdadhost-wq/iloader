@@ -23,6 +23,7 @@ import { Settings } from "./pages/Settings";
 import { Pairing } from "./pages/Pairing";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForUpdates } from "./update";
+import { isMobile, pickFile, uploadFile } from "./mobile";
 import logo from "./iloader.svg";
 import { GlassCard } from "./components/GlassCard";
 import { useTranslation } from "react-i18next";
@@ -377,12 +378,35 @@ function App() {
                 <button
                   onClick={async () => {
                     if (!ensuredLoggedIn() || !ensureSelectedDevice()) return;
-                    let path = await openFileDialog({
-                      multiple: false,
-                      filters: [
-                        { name: t("app.ipa_files"), extensions: ["ipa"] },
-                      ],
-                    });
+                    let path: string | null = null;
+                    if (isMobile()) {
+                      // The native dialog returns security-scoped URLs on iOS, so pick
+                      // the file in the webview and hand the bytes to the backend.
+                      const file = await pickFile();
+                      if (!file) return;
+                      if (!file.name.toLowerCase().endsWith(".ipa")) {
+                        toast.error(t("app.not_an_ipa"));
+                        return;
+                      }
+                      const upload = uploadFile(file);
+                      toast.promise(upload, {
+                        loading: t("app.preparing_ipa"),
+                        success: t("app.ipa_ready"),
+                        error: (e) => String(e?.message ?? e),
+                      });
+                      try {
+                        path = await upload;
+                      } catch {
+                        return;
+                      }
+                    } else {
+                      path = (await openFileDialog({
+                        multiple: false,
+                        filters: [
+                          { name: t("app.ipa_files"), extensions: ["ipa"] },
+                        ],
+                      })) as string | null;
+                    }
                     if (!path) return;
                     startOperation(sideloadOperation, {
                       appPath: path as string,

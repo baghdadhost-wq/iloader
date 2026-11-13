@@ -6,13 +6,19 @@ import { useTranslation } from "react-i18next";
 import { Modal } from "./components/Modal";
 import { useError } from "./ErrorContext";
 import { AppError } from "./errors";
+import { isMobile, pickFile, readFileBytes } from "./mobile";
+
+// Address LocalDevVPN / StosVPN route back to the device itself.
+const SELF_DEVICE_ADDRESS = "10.7.0.1";
 
 export type DeviceInfo = {
   name: string;
   id: number;
-  uuid: string;
-  connectionType: "USB" | "Network" | "Unknown";
+  udid: string;
+  connectionType: "USB" | "Network" | "Wi-Fi" | "Unknown";
   version: string;
+  /** Set for devices added over Wi-Fi with an imported pairing file. */
+  address?: string;
 };
 
 export const Device = ({
@@ -28,6 +34,10 @@ export const Device = ({
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [waitingToPair, setWaitingToPair] = useState<DeviceInfo | null>(null);
   const [showPairingModal, setShowPairingModal] = useState(false);
+  const [showAddWifi, setShowAddWifi] = useState(false);
+  const [wifiAddress, setWifiAddress] = useState("");
+  const [wifiPairing, setWifiPairing] = useState<File | null>(null);
+  const [addingWifi, setAddingWifi] = useState(false);
 
   const listingDevices = useRef<boolean>(false);
   const pairingRequestId = useRef<number>(0);
@@ -164,6 +174,59 @@ export const Device = ({
     return () => registerRefresh?.(undefined);
   }, [registerRefresh, loadDevices]);
 
+  const openAddWifi = useCallback(() => {
+    setWifiAddress(isMobile() ? SELF_DEVICE_ADDRESS : "");
+    setWifiPairing(null);
+    setShowAddWifi(true);
+  }, []);
+
+  const addWifiDevice = useCallback(async () => {
+    if (!wifiAddress.trim() || !wifiPairing) return;
+    setAddingWifi(true);
+    const promise = (async () => {
+      const pairing = await readFileBytes(wifiPairing);
+      return invoke<DeviceInfo>("add_network_device", {
+        address: wifiAddress.trim(),
+        pairing,
+      });
+    })();
+    toast.promise(promise, {
+      loading: t("device.wifi_adding"),
+      success: (device) => t("device.wifi_added", { device: device.name }),
+      error: (e) => err(t("device.wifi_failed_add"), e),
+    });
+    try {
+      const device = await promise;
+      setShowAddWifi(false);
+      // Update the list in place: a full reload would auto-select the first device.
+      setDevices((prev) => [
+        ...prev.filter((d) => d.udid !== device.udid),
+        device,
+      ]);
+      selectDevice(device);
+    } catch {
+      // error shown by the toast
+    } finally {
+      setAddingWifi(false);
+    }
+  }, [wifiAddress, wifiPairing, t, err, selectDevice]);
+
+  const removeWifiDevice = useCallback(
+    async (device: DeviceInfo) => {
+      try {
+        await invoke("remove_network_device", { udid: device.udid });
+        if (selectedDevice?.udid === device.udid) {
+          selectDevice(null);
+        }
+        toast.success(t("device.wifi_removed", { device: device.name }));
+        loadDevices();
+      } catch (e) {
+        toast.error(err(t("device.wifi_failed_remove"), e as AppError));
+      }
+    },
+    [selectedDevice, selectDevice, loadDevices, t, err],
+  );
+
   return (
     <>
       <Modal
@@ -197,6 +260,56 @@ export const Device = ({
           </button>
         </div>
       </Modal>
+      <Modal
+        isOpen={showAddWifi}
+        close={() => {
+          if (!addingWifi) setShowAddWifi(false);
+        }}
+      >
+        <div className="wifi-modal-content">
+          <h2>{t("device.wifi_add_title")}</h2>
+          <p className="wifi-hint">{t("device.wifi_hint")}</p>
+          <label className="wifi-field">
+            <span>{t("device.wifi_ip_address")}</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="192.168.1.20"
+              value={wifiAddress}
+              onChange={(e) => setWifiAddress(e.target.value)}
+              disabled={addingWifi}
+            />
+          </label>
+          <button
+            className="wifi-secondary"
+            onClick={() => setWifiAddress(SELF_DEVICE_ADDRESS)}
+            disabled={addingWifi}
+          >
+            {t("device.wifi_this_device")}
+          </button>
+          <p className="wifi-hint">{t("device.wifi_this_device_hint")}</p>
+          <button
+            className="wifi-secondary"
+            onClick={async () => {
+              const file = await pickFile();
+              if (file) setWifiPairing(file);
+            }}
+            disabled={addingWifi}
+          >
+            {wifiPairing
+              ? t("device.wifi_pairing_selected", { file: wifiPairing.name })
+              : t("device.wifi_choose_pairing")}
+          </button>
+          <button
+            onClick={addWifiDevice}
+            disabled={addingWifi || !wifiAddress.trim() || !wifiPairing}
+          >
+            {t("device.wifi_add")}
+          </button>
+        </div>
+      </Modal>
       <h2 style={{ marginTop: 0 }}>{t("device.title")}</h2>
       <div className="credentials-container">
         {devices.length === 0 && (
@@ -205,8 +318,8 @@ export const Device = ({
         {devices.map((device) => {
           const isActive = selectedDevice?.id === device.id;
           return (
+            <div className="device-row" key={device.id}>
             <button
-              key={device.id}
               className={"device-card card" + (isActive ? " active" : "")}
               onClick={() => selectDevice(device)}
               disabled={waitingToPair !== null}
@@ -214,7 +327,9 @@ export const Device = ({
               <div className="device-meta">
                 <span className="device-name">{device.name}</span>
                 <span className="device-connection">
-                  {device.connectionType}
+                  {device.address
+                    ? `${device.connectionType} · ${device.address}`
+                    : device.connectionType}
                 </span>
               </div>
               {isActive && (
@@ -223,10 +338,25 @@ export const Device = ({
                 </span>
               )}
             </button>
+            {device.address && (
+              <button
+                className="device-remove"
+                title={t("device.wifi_remove")}
+                aria-label={t("device.wifi_remove")}
+                onClick={() => removeWifiDevice(device)}
+                disabled={waitingToPair !== null}
+              >
+                ✕
+              </button>
+            )}
+            </div>
           );
         })}
         <button disabled={waitingToPair !== null} onClick={loadDevices}>
           {t("common.refresh")}
+        </button>
+        <button disabled={waitingToPair !== null} onClick={openAddWifi}>
+          {t("device.wifi_add_button")}
         </button>
       </div>
     </>

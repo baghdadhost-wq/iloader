@@ -45,7 +45,10 @@
     "must_be_logged_in": "You must be logged in!",
     "must_select_device": "You must select a device!",
     "ipa_files": "IPA Files",
-    "logo_alt": "iloader logo"
+    "logo_alt": "iloader logo",
+    "not_an_ipa": "Please choose an .ipa file",
+    "preparing_ipa": "Preparing IPA...",
+    "ipa_ready": "IPA ready"
   },
   "apple_id": {
     "title": "Apple ID",
@@ -94,7 +97,22 @@
     "pairing_in_progress_header": "Pairing with {{device}}...",
     "pairing_in_progress_hint": "Please unlock your device and click \"Trust,\" then enter your passcode if prompted.",
     "pairing_cancel": "Cancel",
-    "failed_select": "Failed to select device"
+    "failed_select": "Failed to select device",
+    "wifi_add_button": "Add Wi-Fi Device",
+    "wifi_add_title": "Add a device over Wi-Fi",
+    "wifi_hint": "You need the device's pairing file. Create it once with iloader on a computer over USB (Manage Pairing File → Export), then send it here, e.g. with AirDrop. Both devices must be on the same network.",
+    "wifi_ip_address": "Device IP address",
+    "wifi_this_device": "Use this device (10.7.0.1)",
+    "wifi_this_device_hint": "To install on the device running iloader, connect LocalDevVPN (or StosVPN) first and use 10.7.0.1 with this device's own pairing file.",
+    "wifi_choose_pairing": "Choose pairing file",
+    "wifi_pairing_selected": "Pairing file: {{file}}",
+    "wifi_add": "Add device",
+    "wifi_adding": "Connecting to device...",
+    "wifi_added": "Added {{device}}",
+    "wifi_failed_add": "Failed to add device",
+    "wifi_remove": "Remove device",
+    "wifi_removed": "Removed {{device}}",
+    "wifi_failed_remove": "Failed to remove device"
   },
   "operation": {
     "failed": "Operation failed.",

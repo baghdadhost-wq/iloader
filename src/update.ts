@@ -3,8 +3,11 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { toast } from "sonner";
 import i18n from "./i18next";
+import { mobileReady } from "./mobile";
 
 export async function checkForUpdates() {
+  // The updater plugin is desktop-only; mobile builds are updated by re-sideloading.
+  if (await mobileReady) return;
   const update = await check();
   if (update) {
     if (

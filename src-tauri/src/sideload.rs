@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Mutex};
 
 use crate::{
-    device::{DeviceInfoMutex, get_provider, get_provider_from_connection, get_usbmuxd},
+    device::{DeviceInfoMutex, get_provider},
     error::AppError,
     operation::Operation,
     pairing::{get_sidestore_info, place_file},
@@ -159,12 +159,7 @@ pub async fn install_sidestore_operation(
         get_sidestore_info(&device.info, live_container).await,
     )?;
     if let Some(info) = sidestore_info {
-        let mut usbmuxd = op.fail_if_err("pairing", get_usbmuxd().await)?;
-
-        let provider = op.fail_if_err(
-            "pairing",
-            get_provider_from_connection(&device.info, &mut usbmuxd).await,
-        )?;
+        let provider = op.fail_if_err("pairing", get_provider(&device.info).await)?;
 
         op.fail_if_err(
             "pairing",
@@ -204,4 +199,42 @@ pub async fn download(url: impl AsRef<str>, dest: &PathBuf) -> Result<(), AppErr
     })?;
 
     Ok(())
+}
+
+/// Receives a file picked in the webview (used on iOS, where the native file dialog
+/// returns security-scoped URLs instead of paths) and writes it to a temp file.
+/// The frontend sends the raw bytes as the request body and the file name in the
+/// `x-file-name` header. Returns the path of the written file.
+#[tauri::command]
+pub fn upload_file(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, AppError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(AppError::Misc("Expected raw file data".to_string()));
+    };
+
+    let requested_name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("upload.ipa");
+    let mut name: String = requested_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect();
+    if name.is_empty() || name.starts_with('.') {
+        name = format!("upload{name}");
+    }
+
+    let dir = app
+        .path()
+        .temp_dir()
+        .map_err(|e| AppError::Filesystem("Failed to get temp dir".into(), e.to_string()))?
+        .join("uploads");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::Filesystem("Failed to create upload directory".into(), e.to_string())
+    })?;
+    let path = dir.join(name);
+    std::fs::write(&path, bytes)
+        .map_err(|e| AppError::Filesystem("Failed to write uploaded file".into(), e.to_string()))?;
+
+    Ok(path.to_string_lossy().to_string())
 }

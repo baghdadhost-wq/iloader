@@ -1,0 +1,77 @@
+name: "Build iloader for iOS/iPadOS (unsigned IPA)"
+
+# Produces an unsigned .ipa. Install it with iloader (desktop), SideStore or
+# another sideloading tool, which re-signs it with your own Apple ID.
+
+on:
+  push:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Cache Rust and bun dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+            node_modules
+          key: ios-iloader-${{ hashFiles('**/Cargo.lock', 'bun.lock') }}
+          restore-keys: |
+            ios-iloader-
+
+      - name: Install Rust stable with the iOS target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate the Xcode project
+        run: bun tauri ios init --ci
+
+      - name: Build
+        run: bun tauri ios build --ci --no-sign --target aarch64
+
+      - name: Collect the IPA
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          IPA="$(find src-tauri/gen/apple -name '*.ipa' -type f | head -n 1 || true)"
+          if [ -n "$IPA" ]; then
+            cp "$IPA" out/iloader-ios-unsigned.ipa
+          else
+            # Fall back to packaging the .app from the archive.
+            APP="$(find src-tauri/gen/apple -path '*.xcarchive/Products/Applications/*.app' -type d -prune | head -n 1 || true)"
+            if [ -z "$APP" ]; then
+              echo "::error::No .ipa or .app was produced"
+              find src-tauri/gen/apple -maxdepth 4 | head -n 200
+              exit 1
+            fi
+            mkdir -p out/Payload
+            cp -R "$APP" out/Payload/
+            (cd out && zip -qry iloader-ios-unsigned.ipa Payload && rm -rf Payload)
+          fi
+          ls -la out
+
+      - name: Upload the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iloader-ios-unsigned
+          path: out/iloader-ios-unsigned.ipa
+          if-no-files-found: error

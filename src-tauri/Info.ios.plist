@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged by the Tauri CLI into the generated iOS Info.plist. -->
+	<!-- Required since iOS 18 to connect to other devices on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>iloader connects to your devices on the local network to install and manage apps.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_apple-mobdev2._tcp</string>
+	</array>
+	<!-- Lets users open iloader's folder (logs, downloads) in the Files app. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

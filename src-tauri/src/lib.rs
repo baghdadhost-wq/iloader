@@ -18,23 +18,29 @@ use crate::{
         logged_in_as, login_new, login_stored, reset_anisette_state, revoke_certificate,
     },
     device::{
-        DeviceInfoMutex, PairingCancelToken, cancel_pairing, list_devices, set_selected_device,
+        DeviceInfoMutex, PairingCancelToken, add_network_device, cancel_pairing, is_mobile,
+        list_devices, remove_network_device, set_selected_device,
     },
     pairing::{
         delete_stored_rppairing, export_pairing_cmd, has_stored_rppairing, installed_pairing_apps,
         place_pairing_cmd,
     },
     secure_storage::{force_disable_keyring, keyring_available},
-    sideload::{SideloaderMutex, install_sidestore_operation, sideload_operation},
+    sideload::{SideloaderMutex, install_sidestore_operation, sideload_operation, upload_file},
 };
 use tauri::Manager;
 use tracing_subscriber::{Layer, Registry, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // The updater is desktop-only (see the target-specific dependency in Cargo.toml).
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -126,6 +132,10 @@ pub fn run() {
             force_disable_keyring,
             cancel_pairing,
             has_stored_rppairing,
+            add_network_device,
+            remove_network_device,
+            is_mobile,
+            upload_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

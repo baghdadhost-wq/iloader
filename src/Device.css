@@ -51,3 +51,44 @@
   border: 1px solid rgba(255, 255, 255, 0.18);
   font-size: 0.9rem;
 }
+
+.device-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.device-row .device-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-remove {
+  flex: 0 0 auto;
+  padding: 0 0.9rem;
+  border-radius: 14px;
+}
+
+.wifi-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: min(420px, 80vw);
+}
+
+.wifi-modal-content h2 {
+  margin: 0;
+}
+
+.wifi-hint {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.wifi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}

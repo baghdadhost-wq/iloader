@@ -291,7 +291,7 @@ fn build_pairing_storage_entry(app: &AppHandle, keyring_enabled: bool) -> Pairin
     }
 }
 
-fn with_pairing_storage<T>(
+pub(crate) fn with_pairing_storage<T>(
     app: &AppHandle,
     f: impl FnOnce(&dyn SideloadingStorage) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
@@ -443,6 +443,10 @@ pub async fn delete_stored_rppairing(
 
 #[tauri::command]
 pub async fn has_stored_rppairing(device: DeviceInfo, app: AppHandle) -> Result<bool, AppError> {
+    // Wi-Fi devices always come with an imported pairing file
+    if device.address.is_some() {
+        return Ok(true);
+    }
     // rppairing not supported <17.4, returning true so the frontend can still automatically select it
     if is_ios_version_below(&device.version, 17, 4) {
         return Ok(true);

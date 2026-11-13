@@ -44,7 +44,10 @@
     "must_be_logged_in": "عليك تسجيل الدخول",
     "must_select_device": "عليك اختيار جهاز",
     "ipa_files": "IPA ملفات",
-    "logo_alt": "iLoader أيقونة"
+    "logo_alt": "iLoader أيقونة",
+    "not_an_ipa": "الرجاء اختيار ملف ‎.ipa",
+    "preparing_ipa": "جارٍ تجهيز ملف IPA...",
+    "ipa_ready": "ملف IPA جاهز"
   },
   "apple_id": {
     "title": "معرف آبل",
@@ -93,7 +96,22 @@
     "pairing_in_progress_header": "{{device}} يتم الاقتران مع",
     "pairing_in_progress_hint": "يرجى فتح قفل جهازك والضغط على \"الوثوق\" ثم كتابة رمزك للدخول في حال طلب منك ذلك",
     "pairing_cancel": "إلغاء",
-    "failed_select": "فشل تحديد جهاز"
+    "failed_select": "فشل تحديد جهاز",
+    "wifi_add_button": "إضافة جهاز عبر Wi-Fi",
+    "wifi_add_title": "إضافة جهاز عبر Wi-Fi",
+    "wifi_hint": "تحتاج ملف الاقتران الخاص بالجهاز. أنشئه مرة واحدة باستخدام iloader على الكمبيوتر عبر USB (إدارة ملف الاقتران ← تصدير)، ثم أرسله إلى هنا، مثلاً عبر AirDrop. يجب أن يكون الجهازان على نفس الشبكة.",
+    "wifi_ip_address": "عنوان IP للجهاز",
+    "wifi_this_device": "استخدام هذا الجهاز (10.7.0.1)",
+    "wifi_this_device_hint": "للتثبيت على الجهاز الذي يعمل عليه iloader، شغّل LocalDevVPN (أو StosVPN) أولاً واستخدم 10.7.0.1 مع ملف الاقتران الخاص بهذا الجهاز.",
+    "wifi_choose_pairing": "اختيار ملف الاقتران",
+    "wifi_pairing_selected": "ملف الاقتران: {{file}}",
+    "wifi_add": "إضافة الجهاز",
+    "wifi_adding": "جارٍ الاتصال بالجهاز...",
+    "wifi_added": "تمت إضافة {{device}}",
+    "wifi_failed_add": "فشلت إضافة الجهاز",
+    "wifi_remove": "إزالة الجهاز",
+    "wifi_removed": "تمت إزالة {{device}}",
+    "wifi_failed_remove": "فشلت إزالة الجهاز"
   },
   "operation": {
     "failed": "فشلت المهمة",
