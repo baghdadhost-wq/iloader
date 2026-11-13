@@ -193,11 +193,11 @@ pub async fn install_sidestore_operation(
     };
     op.fail_if_err(
         "install",
-        sideload(
+        Box::pin(sideload(
             device_state,
             sideloader_state,
             dest.to_string_lossy().to_string(),
-        )
+        ))
         .await,
     )?;
     op.move_on("install", "pairing")?;
