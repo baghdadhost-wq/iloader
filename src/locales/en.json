@@ -83,7 +83,18 @@
     "hide_certificate_list": "Hide certificate list",
     "choose_what_to_revoke": "Choose what to revoke",
     "continue": "Continue",
-    "no_keyring_available": "Unable to save credentials on this device."
+    "no_keyring_available": "Unable to save credentials on this device.",
+    "export_signin": "Export",
+    "export_signin_hint": "Save this sign-in to a file to use it in iloader on another device",
+    "exporting_signin": "Exporting sign-in...",
+    "exported_signin": "Sign-in exported. The file contains your password: keep it private and delete it after importing.",
+    "export_canceled": "Export canceled",
+    "export_signin_failed": "Failed to export sign-in",
+    "import_signin": "Import sign-in from another device",
+    "import_signin_hint": "Use a sign-in exported from iloader on your computer: no new 2FA code and the same certificate.",
+    "importing_signin": "Importing sign-in...",
+    "imported_signin": "Imported {{email}}. Tap Sign in on it, then delete the file.",
+    "import_signin_failed": "Failed to import sign-in"
   },
   "device": {
     "title": "iDevice",

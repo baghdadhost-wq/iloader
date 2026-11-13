@@ -82,7 +82,18 @@
     "hide_certificate_list": "اخفاء قائمة الشهادات",
     "choose_what_to_revoke": "اختر الشهادة التي تريد حذفها",
     "continue": "استمر",
-    "no_keyring_available": "فشل حفظ البيانات على هذا الجهاز"
+    "no_keyring_available": "فشل حفظ البيانات على هذا الجهاز",
+    "export_signin": "تصدير",
+    "export_signin_hint": "احفظ تسجيل الدخول هذا في ملف لاستخدامه في iloader على جهاز آخر",
+    "exporting_signin": "جارٍ تصدير تسجيل الدخول...",
+    "exported_signin": "تم التصدير. الملف يحتوي كلمة مرورك: لا تشاركه واحذفه بعد الاستيراد.",
+    "export_canceled": "أُلغي التصدير",
+    "export_signin_failed": "فشل تصدير تسجيل الدخول",
+    "import_signin": "استيراد تسجيل الدخول من جهاز آخر",
+    "import_signin_hint": "استخدم ملف تسجيل دخول مُصدَّر من iloader على الكمبيوتر: دون رمز 2FA جديد وبنفس الشهادة.",
+    "importing_signin": "جارٍ استيراد تسجيل الدخول...",
+    "imported_signin": "تم استيراد {{email}}. اضغط تسجيل الدخول عليه، ثم احذف الملف.",
+    "import_signin_failed": "فشل استيراد تسجيل الدخول"
   },
   "device": {
     "title": "iDevice",

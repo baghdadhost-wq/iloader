@@ -11,6 +11,7 @@ mod secure_storage;
 mod error;
 mod host_pairing;
 mod rp_tunnel;
+mod session_transfer;
 mod logging;
 mod operation;
 
@@ -29,6 +30,7 @@ use crate::{
     },
     host_pairing::{cancel_host_pairing, start_host_pairing},
     secure_storage::{force_disable_keyring, keyring_available},
+    session_transfer::{export_session, import_session},
     sideload::{SideloaderMutex, install_sidestore_operation, sideload_operation, upload_file},
 };
 use tauri::Manager;
@@ -157,6 +159,8 @@ pub fn run() {
             upload_file,
             start_host_pairing,
             cancel_host_pairing,
+            export_session,
+            import_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

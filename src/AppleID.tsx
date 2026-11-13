@@ -9,6 +9,7 @@ import { useStore } from "./StoreContext";
 import { useError } from "./ErrorContext";
 import { Certificate } from "./pages/Certificates";
 import { useTranslation } from "react-i18next";
+import { pickFile, readFileBytes } from "./mobile";
 
 const storePromise = load("data.json");
 
@@ -160,6 +161,26 @@ export const AppleID = ({
                     )}
                     <button
                       type="button"
+                      className="action-button"
+                      title={t("apple_id.export_signin_hint")}
+                      onClick={() => {
+                        const promise = invoke("export_session", { email: id });
+                        toast.promise(promise, {
+                          loading: t("apple_id.exporting_signin"),
+                          success: t("apple_id.exported_signin"),
+                          error: (e) => {
+                            const msg = String((e as any)?.message ?? e ?? "");
+                            return msg.toLowerCase().includes("canceled")
+                              ? t("apple_id.export_canceled")
+                              : err(t("apple_id.export_signin_failed"), e);
+                          },
+                        });
+                      }}
+                    >
+                      {t("apple_id.export_signin")}
+                    </button>
+                    <button
+                      type="button"
                       className="action-button danger"
                       onClick={async () => {
                         let promise = async () => {
@@ -189,6 +210,32 @@ export const AppleID = ({
                 </div>
               )}
             </div>
+          </div>
+        )}
+        {!loggedInAs && (
+          <div className="import-signin">
+            <button
+              type="button"
+              className="action-button"
+              onClick={async () => {
+                const file = await pickFile();
+                if (!file) return;
+                const promise = (async () => {
+                  const data = await readFileBytes(file);
+                  const email = await invoke<string>("import_session", { data });
+                  setForceUpdateIds((v) => v + 1);
+                  return email;
+                })();
+                toast.promise(promise, {
+                  loading: t("apple_id.importing_signin"),
+                  success: (email) => t("apple_id.imported_signin", { email }),
+                  error: (e) => err(t("apple_id.import_signin_failed"), e),
+                });
+              }}
+            >
+              {t("apple_id.import_signin")}
+            </button>
+            <p className="settings-hint">{t("apple_id.import_signin_hint")}</p>
           </div>
         )}
         {((loggedInAs === null && storedIds.length === 0) ||

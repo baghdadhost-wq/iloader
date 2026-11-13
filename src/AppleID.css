@@ -195,3 +195,13 @@
 .credentials-warning {
   margin: 0;
 }
+
+.import-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.import-signin .settings-hint {
+  margin: 0;
+}
